@@ -6,6 +6,7 @@ import { prisma } from "@/lib/prisma";
 
 const createRoomSchema = z.object({
   name: z.string().min(2).max(80),
+  friendsCanView: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -19,6 +20,11 @@ export async function GET() {
     include: {
       room: {
         include: {
+          createdBy: {
+            select: {
+              username: true,
+            },
+          },
           _count: {
             select: {
               participants: true,
@@ -54,6 +60,7 @@ export async function POST(request: Request) {
       data: {
         name: parsed.data.name.trim(),
         createdById: user.id,
+        friendsCanView: parsed.data.friendsCanView ?? true,
       },
     });
 
@@ -67,6 +74,11 @@ export async function POST(request: Request) {
     return tx.room.findUniqueOrThrow({
       where: { id: created.id },
       include: {
+        createdBy: {
+          select: {
+            username: true,
+          },
+        },
         _count: {
           select: {
             participants: true,

@@ -1,5 +1,6 @@
 import { Message } from "@prisma/client";
 import { env } from "@/lib/env";
+import { findBlockedContent, SAFETY_REFUSAL_MESSAGE } from "@/lib/safety";
 
 type AgentConfig = {
   id: string;
@@ -32,6 +33,50 @@ function senderLabel(message: {
     return message.senderUser?.username ?? "Human";
   }
   return message.senderAgent?.name ?? "Agent";
+}
+
+function inferPromptStyle(systemPrompt: string) {
+  const prompt = systemPrompt.toLowerCase();
+  const styleHints: string[] = [];
+
+  if (prompt.includes("friendly") || prompt.includes("warm")) {
+    styleHints.push("friendly");
+  }
+  if (prompt.includes("formal") || prompt.includes("professional")) {
+    styleHints.push("professional");
+  }
+  if (prompt.includes("funny") || prompt.includes("humor") || prompt.includes("playful")) {
+    styleHints.push("playful");
+  }
+  if (prompt.includes("short") || prompt.includes("concise")) {
+    styleHints.push("concise");
+  }
+
+  return styleHints;
+}
+
+function applyStyleToReply(reply: string, styleHints: string[]) {
+  if (styleHints.length === 0) {
+    return reply;
+  }
+
+  if (styleHints.includes("concise")) {
+    return reply.split(/\s+/).slice(0, 28).join(" ");
+  }
+
+  if (styleHints.includes("professional")) {
+    return `Certainly. ${reply}`;
+  }
+
+  if (styleHints.includes("friendly")) {
+    return `${reply} Happy to help more if you want.`;
+  }
+
+  if (styleHints.includes("playful")) {
+    return `${reply} Quick bonus twist: we can test a creative angle too.`;
+  }
+
+  return reply;
 }
 
 function normalizeMathExpression(raw: string) {
@@ -100,37 +145,48 @@ function buildFallbackReply(input: GenerateReplyInput) {
   const prompt = input.agent.systemPrompt.toLowerCase();
   const source = input.triggerMessage.content.trim();
   const lowered = source.toLowerCase();
+  const styleHints = inferPromptStyle(input.agent.systemPrompt);
+
+  if (findBlockedContent(source)) {
+    return SAFETY_REFUSAL_MESSAGE;
+  }
 
   const solved = trySolveMath(source);
   if (solved) {
-    return solved;
+    return applyStyleToReply(solved, styleHints);
   }
 
   if (/^(hi|hello|hey|yo|sup)[!. ]*$/i.test(source)) {
-    return "Hey! I am here and ready. Ask me anything, and I will do my best to help.";
+    return applyStyleToReply("Hey! I am here and ready. Ask me anything, and I will do my best to help.", styleHints);
   }
 
   if (/^(thanks|thank you|thx)[!. ]*$/i.test(source)) {
-    return "You are welcome. Want to keep going?";
+    return applyStyleToReply("You are welcome. Want to keep going?", styleHints);
   }
 
   if (prompt.includes("summar")) {
-    return buildSummaryFromHistory(input);
+    return applyStyleToReply(buildSummaryFromHistory(input), styleHints);
   }
 
   if (prompt.includes("debate") || prompt.includes("debater")) {
-    return `Counterpoint: I see your claim, but we should test assumptions, cite evidence, and compare alternatives before concluding.`;
+    return applyStyleToReply(
+      "Counterpoint: I see your claim, but we should test assumptions, cite evidence, and compare alternatives before concluding.",
+      styleHints,
+    );
   }
 
   if (prompt.includes("chaos")) {
-    return `Plot twist: let's invert the assumption and test the wild scenario before settling.`;
+    return applyStyleToReply("Plot twist: let's invert the assumption and test the wild scenario before settling.", styleHints);
   }
 
   if (lowered.endsWith("?")) {
-    return "Short answer: I can handle math and structured reasoning in fallback mode. For broad knowledge responses, add an OpenAI API key.";
+    return applyStyleToReply(
+      "Short answer: I can handle math and structured reasoning in fallback mode. For broad knowledge responses, add an OpenAI API key.",
+      styleHints,
+    );
   }
 
-  return `My take: ${source.slice(0, 180)}`;
+  return applyStyleToReply(`My take: ${source.slice(0, 180)}`, styleHints);
 }
 
 export async function generateAgentReply(input: GenerateReplyInput) {
@@ -171,6 +227,7 @@ export async function generateAgentReply(input: GenerateReplyInput) {
         model: input.agent.model || env.OPENAI_DEFAULT_MODEL,
         temperature: input.agent.temperature,
         max_tokens: 220,
+        top_p: 1,
         messages,
       }),
     });
@@ -187,6 +244,10 @@ export async function generateAgentReply(input: GenerateReplyInput) {
     const content = data.choices?.[0]?.message?.content?.trim();
     if (!content) {
       return buildFallbackReply(input);
+    }
+
+    if (findBlockedContent(content)) {
+      return SAFETY_REFUSAL_MESSAGE;
     }
 
     return content;

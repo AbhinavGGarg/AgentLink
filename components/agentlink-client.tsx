@@ -10,10 +10,28 @@ type User = {
   username: string;
 };
 
+type FriendUser = {
+  friendshipId: string;
+  userId: string;
+  username: string;
+};
+
+type FriendsPayload = {
+  friends: FriendUser[];
+  incoming: FriendUser[];
+  outgoing: FriendUser[];
+};
+
 type RoomDetails = {
   room: {
     id: string;
     name: string;
+    createdById: string;
+    createdByUsername: string;
+    friendsCanView: boolean;
+    canWrite: boolean;
+    canManage: boolean;
+    isFriendView: boolean;
   };
   participants: ParticipantSummary[];
   agents: RoomAgentSummary[];
@@ -121,8 +139,14 @@ export function AgentLinkClient() {
   const [authPassword, setAuthPassword] = useState("");
 
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
+  const [friendRooms, setFriendRooms] = useState<RoomSummary[]>([]);
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [roomDetails, setRoomDetails] = useState<RoomDetails | null>(null);
+
+  const [friends, setFriends] = useState<FriendUser[]>([]);
+  const [incomingFriends, setIncomingFriends] = useState<FriendUser[]>([]);
+  const [outgoingFriends, setOutgoingFriends] = useState<FriendUser[]>([]);
+  const [friendUsernameInput, setFriendUsernameInput] = useState("");
 
   const [newRoomName, setNewRoomName] = useState("");
   const [joinRoomId, setJoinRoomId] = useState("");
@@ -142,9 +166,20 @@ export function AgentLinkClient() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const allVisibleRooms = useMemo(() => {
+    const byId = new Map<string, RoomSummary>();
+    for (const room of friendRooms) {
+      byId.set(room.id, room);
+    }
+    for (const room of rooms) {
+      byId.set(room.id, room);
+    }
+    return Array.from(byId.values());
+  }, [rooms, friendRooms]);
+
   const activeRoom = useMemo(
-    () => rooms.find((room) => room.id === activeRoomId) ?? null,
-    [rooms, activeRoomId],
+    () => allVisibleRooms.find((room) => room.id === activeRoomId) ?? null,
+    [allVisibleRooms, activeRoomId],
   );
 
   const thinkingCount = useMemo(() => Object.keys(thinkingMap).length, [thinkingMap]);
@@ -154,31 +189,32 @@ export function AgentLinkClient() {
     setUser(data.user);
   }, []);
 
-  const loadRooms = useCallback(async (selectNewest = false) => {
+  const loadRooms = useCallback(async () => {
     const data = await requestJson<{ rooms: RoomSummary[] }>("/api/rooms", { method: "GET" });
     setRooms(data.rooms);
+  }, []);
 
-    if (data.rooms.length === 0) {
-      setActiveRoomId(null);
-      setRoomDetails(null);
-      return;
-    }
+  const loadFriendRooms = useCallback(async () => {
+    const data = await requestJson<{ rooms: RoomSummary[] }>("/api/friends/rooms", { method: "GET" });
+    setFriendRooms(data.rooms);
+  }, []);
 
-    if (selectNewest) {
-      setActiveRoomId(data.rooms[0].id);
-      return;
-    }
-
-    if (!activeRoomId || !data.rooms.some((room) => room.id === activeRoomId)) {
-      setActiveRoomId(data.rooms[0].id);
-    }
-  }, [activeRoomId]);
+  const loadFriends = useCallback(async () => {
+    const data = await requestJson<FriendsPayload>("/api/friends", { method: "GET" });
+    setFriends(data.friends);
+    setIncomingFriends(data.incoming);
+    setOutgoingFriends(data.outgoing);
+  }, []);
 
   const loadRoom = useCallback(async (roomId: string) => {
     const data = await requestJson<RoomDetails>(`/api/rooms/${roomId}`, { method: "GET" });
     setRoomDetails(data);
     setThinkingMap({});
   }, []);
+
+  const reloadSidebarData = useCallback(async () => {
+    await Promise.all([loadRooms(), loadFriendRooms(), loadFriends()]);
+  }, [loadRooms, loadFriendRooms, loadFriends]);
 
   useEffect(() => {
     loadSession().catch((loadError: unknown) => {
@@ -192,11 +228,23 @@ export function AgentLinkClient() {
       return;
     }
 
-    loadRooms().catch((loadError: unknown) => {
-      const message = loadError instanceof Error ? loadError.message : "Failed loading rooms.";
+    reloadSidebarData().catch((loadError: unknown) => {
+      const message = loadError instanceof Error ? loadError.message : "Failed loading rooms and friends.";
       setError(message);
     });
-  }, [user, loadRooms]);
+  }, [user, reloadSidebarData]);
+
+  useEffect(() => {
+    if (allVisibleRooms.length === 0) {
+      setActiveRoomId(null);
+      setRoomDetails(null);
+      return;
+    }
+
+    if (!activeRoomId || !allVisibleRooms.some((room) => room.id === activeRoomId)) {
+      setActiveRoomId(allVisibleRooms[0].id);
+    }
+  }, [allVisibleRooms, activeRoomId]);
 
   useEffect(() => {
     if (!activeRoomId) {
@@ -324,6 +372,10 @@ export function AgentLinkClient() {
 
     setUser(null);
     setRooms([]);
+    setFriendRooms([]);
+    setFriends([]);
+    setIncomingFriends([]);
+    setOutgoingFriends([]);
     setActiveRoomId(null);
     setRoomDetails(null);
   }
@@ -338,13 +390,14 @@ export function AgentLinkClient() {
     setBusy(true);
 
     try {
-      await requestJson<{ room: RoomSummary }>("/api/rooms", {
+      const data = await requestJson<{ room: RoomSummary }>("/api/rooms", {
         method: "POST",
         body: JSON.stringify({ name: newRoomName }),
       });
 
       setNewRoomName("");
-      await loadRooms(true);
+      await reloadSidebarData();
+      setActiveRoomId(data.room.id);
     } catch (createError: unknown) {
       const message = createError instanceof Error ? createError.message : "Failed creating room.";
       setError(message);
@@ -369,7 +422,7 @@ export function AgentLinkClient() {
       });
 
       setJoinRoomId("");
-      await loadRooms();
+      await reloadSidebarData();
       setActiveRoomId(data.room.id);
     } catch (joinError: unknown) {
       const message = joinError instanceof Error ? joinError.message : "Failed joining room.";
@@ -381,7 +434,7 @@ export function AgentLinkClient() {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeRoomId || !newMessage.trim()) {
+    if (!activeRoomId || !newMessage.trim() || !roomDetails?.room.canWrite) {
       return;
     }
 
@@ -422,7 +475,7 @@ export function AgentLinkClient() {
 
   async function createAgent(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!activeRoomId || !agentName.trim() || !agentPrompt.trim()) {
+    if (!activeRoomId || !agentName.trim() || !agentPrompt.trim() || !roomDetails?.room.canWrite) {
       return;
     }
 
@@ -456,7 +509,7 @@ export function AgentLinkClient() {
       setIsCreatingAgent(false);
 
       await loadRoom(activeRoomId);
-      await loadRooms();
+      await reloadSidebarData();
     } catch (createError: unknown) {
       const message = createError instanceof Error ? createError.message : "Failed creating agent.";
       setError(message);
@@ -466,7 +519,7 @@ export function AgentLinkClient() {
   }
 
   async function toggleAgent(agent: RoomAgentSummary, enabled: boolean) {
-    if (!activeRoomId) {
+    if (!activeRoomId || !roomDetails?.room.canWrite) {
       return;
     }
 
@@ -500,7 +553,7 @@ export function AgentLinkClient() {
   }
 
   async function nudgeAgent(agentId: string) {
-    if (!activeRoomId) {
+    if (!activeRoomId || !roomDetails?.room.canWrite) {
       return;
     }
 
@@ -515,6 +568,118 @@ export function AgentLinkClient() {
       await loadRoom(activeRoomId);
     } catch (nudgeError: unknown) {
       const message = nudgeError instanceof Error ? nudgeError.message : "Failed nudging agent.";
+      setError(message);
+    }
+  }
+
+  async function copyRoomId() {
+    if (!roomDetails) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(roomDetails.room.id);
+    } catch {
+      setError("Could not copy room ID.");
+    }
+  }
+
+  async function updateRoomPrivacy(nextValue: boolean) {
+    if (!activeRoomId || !roomDetails?.room.canManage) {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      await requestJson<{ room: { id: string; friendsCanView: boolean } }>(`/api/rooms/${activeRoomId}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          friendsCanView: nextValue,
+        }),
+      });
+
+      setRoomDetails((current) =>
+        current
+          ? {
+              ...current,
+              room: {
+                ...current.room,
+                friendsCanView: nextValue,
+              },
+            }
+          : current,
+      );
+      await loadFriendRooms();
+    } catch (privacyError: unknown) {
+      const message = privacyError instanceof Error ? privacyError.message : "Failed updating room privacy.";
+      setError(message);
+    }
+  }
+
+  async function deleteActiveRoom() {
+    if (!activeRoomId || !roomDetails?.room.canManage) {
+      return;
+    }
+
+    const confirmed = window.confirm("Delete this chat room and all messages?");
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await requestJson<{ deleted: boolean }>(`/api/rooms/${activeRoomId}`, {
+        method: "DELETE",
+      });
+
+      setRoomDetails(null);
+      setActiveRoomId(null);
+      await reloadSidebarData();
+    } catch (deleteError: unknown) {
+      const message = deleteError instanceof Error ? deleteError.message : "Failed deleting room.";
+      setError(message);
+    }
+  }
+
+  async function sendFriendRequest(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!friendUsernameInput.trim()) {
+      return;
+    }
+
+    setError(null);
+
+    try {
+      await requestJson<{ status: string }>("/api/friends", {
+        method: "POST",
+        body: JSON.stringify({
+          username: friendUsernameInput.trim(),
+        }),
+      });
+      setFriendUsernameInput("");
+      await loadFriends();
+      await loadFriendRooms();
+    } catch (friendError: unknown) {
+      const message = friendError instanceof Error ? friendError.message : "Failed sending friend request.";
+      setError(message);
+    }
+  }
+
+  async function respondToFriendRequest(friendshipId: string, action: "accept" | "decline") {
+    setError(null);
+
+    try {
+      await requestJson<{ status: string }>("/api/friends/respond", {
+        method: "POST",
+        body: JSON.stringify({
+          friendshipId,
+          action,
+        }),
+      });
+      await loadFriends();
+      await loadFriendRooms();
+    } catch (friendError: unknown) {
+      const message = friendError instanceof Error ? friendError.message : "Failed updating friend request.";
       setError(message);
     }
   }
@@ -606,8 +771,8 @@ export function AgentLinkClient() {
 
   return (
     <div className="min-h-screen bg-[radial-gradient(circle_at_top_left,_#0f172a_0%,_#020617_55%,_#000_100%)] text-white">
-      <div className="mx-auto flex min-h-screen max-w-[1500px] gap-4 px-4 py-4 lg:px-6">
-        <aside className="w-full max-w-xs rounded-2xl border border-white/10 bg-slate-950/70 p-4 backdrop-blur">
+      <div className="mx-auto flex min-h-screen max-w-[1600px] gap-4 px-4 py-4 lg:px-6">
+        <aside className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-950/70 p-4 backdrop-blur">
           <div className="mb-4 flex items-center justify-between">
             <div>
               <p className="text-xs uppercase tracking-[0.16em] text-cyan-300/80">AgentLink</p>
@@ -658,7 +823,7 @@ export function AgentLinkClient() {
             </button>
           </form>
 
-          <div className="space-y-2">
+          <div className="mb-4 space-y-2">
             {rooms.map((room) => (
               <button
                 key={room.id}
@@ -672,16 +837,112 @@ export function AgentLinkClient() {
               >
                 <p className="font-semibold text-white">{room.name}</p>
                 <p className="mt-1 text-xs text-slate-300">
-                  ID {room.id.slice(0, 8)}... | {room.participantCount} humans | {room.agentCount} agents
+                  Room ID: <span className="font-mono text-[11px]">{room.id}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-400">
+                  {room.participantCount} humans | {room.agentCount} agents
                 </p>
               </button>
             ))}
-
             {rooms.length === 0 ? (
-              <p className="rounded-lg border border-dashed border-white/20 p-4 text-xs text-slate-300">
-                No rooms yet. Create one or join with a room ID.
+              <p className="rounded-lg border border-dashed border-white/20 p-3 text-xs text-slate-300">
+                No joined rooms yet.
               </p>
             ) : null}
+          </div>
+
+          <div className="mb-4">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-200">Friends&apos; Rooms</h3>
+            <div className="space-y-2">
+              {friendRooms.map((room) => (
+                <button
+                  key={room.id}
+                  type="button"
+                  className={`w-full rounded-lg border px-3 py-2 text-left text-sm transition ${
+                    activeRoomId === room.id
+                      ? "border-cyan-300 bg-cyan-300/15"
+                      : "border-white/10 bg-slate-900/70 hover:border-white/25"
+                  }`}
+                  onClick={() => setActiveRoomId(room.id)}
+                >
+                  <p className="font-semibold text-white">{room.name}</p>
+                  <p className="mt-1 text-xs text-slate-300">
+                    by {room.ownerUsername ?? "friend"} | read-only
+                  </p>
+                </button>
+              ))}
+              {friendRooms.length === 0 ? (
+                <p className="rounded-lg border border-dashed border-white/20 p-3 text-xs text-slate-400">
+                  No friend-shared chats available.
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-cyan-200">Friends</h3>
+            <form className="mb-2 flex gap-2" onSubmit={sendFriendRequest}>
+              <input
+                className="min-w-0 flex-1 rounded-md border border-white/10 bg-slate-950 px-2 py-1.5 text-xs outline-none ring-cyan-300/40 transition focus:ring"
+                placeholder="Add by username"
+                value={friendUsernameInput}
+                onChange={(event) => setFriendUsernameInput(event.target.value)}
+              />
+              <button
+                type="submit"
+                className="rounded-md border border-cyan-300/40 px-2 py-1.5 text-xs font-semibold text-cyan-100 hover:bg-cyan-300/10"
+              >
+                Add
+              </button>
+            </form>
+
+            <div className="mb-2">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Connected</p>
+              <div className="space-y-1 text-xs text-slate-200">
+                {friends.map((friend) => (
+                  <p key={friend.friendshipId}>• {friend.username}</p>
+                ))}
+                {friends.length === 0 ? <p className="text-slate-400">No friends connected yet.</p> : null}
+              </div>
+            </div>
+
+            <div className="mb-2">
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Incoming</p>
+              <div className="space-y-1">
+                {incomingFriends.map((friend) => (
+                  <div key={friend.friendshipId} className="flex items-center justify-between gap-2 text-xs">
+                    <span className="text-slate-200">{friend.username}</span>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        className="rounded bg-emerald-300/20 px-1.5 py-0.5 text-emerald-200"
+                        onClick={() => respondToFriendRequest(friend.friendshipId, "accept")}
+                      >
+                        Accept
+                      </button>
+                      <button
+                        type="button"
+                        className="rounded bg-rose-300/20 px-1.5 py-0.5 text-rose-200"
+                        onClick={() => respondToFriendRequest(friend.friendshipId, "decline")}
+                      >
+                        Decline
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {incomingFriends.length === 0 ? <p className="text-xs text-slate-400">No pending requests.</p> : null}
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-slate-400">Outgoing</p>
+              <div className="space-y-1 text-xs text-slate-300">
+                {outgoingFriends.map((friend) => (
+                  <p key={friend.friendshipId}>• {friend.username} (pending)</p>
+                ))}
+                {outgoingFriends.length === 0 ? <p className="text-slate-400">No outgoing requests.</p> : null}
+              </div>
+            </div>
           </div>
         </aside>
 
@@ -693,20 +954,57 @@ export function AgentLinkClient() {
                   {roomDetails?.room.name ?? activeRoom?.name ?? "Select a Room"}
                 </h1>
                 <p className="mt-1 text-xs text-slate-300">
+                  Room ID: <span className="font-mono">{roomDetails?.room.id ?? activeRoom?.id ?? "-"}</span>
+                </p>
+                <p className="mt-1 text-xs text-slate-300">
                   Mention agents with <span className="font-mono">@name</span> when mention-only mode is enabled.
                 </p>
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
                 <button
                   type="button"
-                  className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200"
+                  className="rounded-lg border border-white/20 px-3 py-2 text-xs text-slate-200 hover:border-cyan-200 disabled:opacity-60"
+                  onClick={copyRoomId}
+                  disabled={!roomDetails}
+                >
+                  Copy Room ID
+                </button>
+                <button
+                  type="button"
+                  className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-60"
                   onClick={() => setIsCreatingAgent((current) => !current)}
-                  disabled={!activeRoomId}
+                  disabled={!activeRoomId || !roomDetails?.room.canWrite}
                 >
                   Add Agent
                 </button>
+                {roomDetails?.room.canManage ? (
+                  <button
+                    type="button"
+                    className="rounded-lg border border-rose-300/40 px-3 py-2 text-xs font-semibold text-rose-200 hover:bg-rose-300/10"
+                    onClick={deleteActiveRoom}
+                  >
+                    Delete Chat
+                  </button>
+                ) : null}
               </div>
             </div>
+
+            {roomDetails?.room.isFriendView ? (
+              <p className="mt-2 rounded-md border border-cyan-300/30 bg-cyan-300/10 px-2 py-1 text-xs text-cyan-100">
+                Viewing a friend&apos;s shared chat (read-only).
+              </p>
+            ) : null}
+
+            {roomDetails?.room.canManage ? (
+              <label className="mt-3 flex items-center gap-2 text-xs text-slate-300">
+                <input
+                  type="checkbox"
+                  checked={roomDetails.room.friendsCanView}
+                  onChange={(event) => void updateRoomPrivacy(event.target.checked)}
+                />
+                Allow connected friends to view this chat
+              </label>
+            ) : null}
 
             {isCreatingAgent && activeRoomId ? (
               <div className="mt-4 rounded-xl border border-white/10 bg-slate-900/80 p-4">
@@ -740,8 +1038,8 @@ export function AgentLinkClient() {
                     required
                   />
                   <textarea
-                    className="md:col-span-2 min-h-24 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm outline-none ring-cyan-300/40 transition focus:ring"
-                    placeholder="System prompt / personality"
+                    className="min-h-24 rounded-lg border border-white/10 bg-slate-950 px-3 py-2 text-sm outline-none ring-cyan-300/40 transition focus:ring md:col-span-2"
+                    placeholder="System prompt / personality (safe content only)"
                     value={agentPrompt}
                     onChange={(event) => setAgentPrompt(event.target.value)}
                     required
@@ -791,7 +1089,7 @@ export function AgentLinkClient() {
                       onChange={(event) => setAgentMaxPerMinute(Number(event.target.value))}
                     />
                   </label>
-                  <label className="md:col-span-2 flex items-center gap-2 text-xs text-slate-300">
+                  <label className="flex items-center gap-2 text-xs text-slate-300 md:col-span-2">
                     <input
                       type="checkbox"
                       checked={agentMentionOnly}
@@ -801,7 +1099,7 @@ export function AgentLinkClient() {
                   </label>
                   <button
                     type="submit"
-                    className="md:col-span-2 rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-70"
+                    className="rounded-lg bg-cyan-300 px-3 py-2 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-70 md:col-span-2"
                     disabled={busy}
                   >
                     Add Agent
@@ -840,16 +1138,22 @@ export function AgentLinkClient() {
                 <div className="flex gap-2">
                   <input
                     className="flex-1 rounded-xl border border-white/10 bg-slate-900 px-4 py-3 text-sm outline-none ring-cyan-300/40 transition focus:ring"
-                    placeholder={activeRoomId ? "Type a message..." : "Select a room first"}
+                    placeholder={
+                      !activeRoomId
+                        ? "Select a room first"
+                        : roomDetails?.room.canWrite
+                          ? "Type a message..."
+                          : "Read-only room"
+                    }
                     value={newMessage}
                     onChange={(event) => setNewMessage(event.target.value)}
-                    disabled={!activeRoomId}
+                    disabled={!activeRoomId || !roomDetails?.room.canWrite}
                     maxLength={2000}
                   />
                   <button
                     type="submit"
                     className="rounded-xl bg-cyan-300 px-4 py-3 text-sm font-semibold text-slate-950 hover:bg-cyan-200 disabled:opacity-60"
-                    disabled={!activeRoomId || !newMessage.trim()}
+                    disabled={!activeRoomId || !newMessage.trim() || !roomDetails?.room.canWrite}
                   >
                     Send
                   </button>
@@ -878,24 +1182,32 @@ export function AgentLinkClient() {
                     </div>
                     <p className="mb-3 text-xs text-slate-400">{agent.model}</p>
                     <div className="flex flex-wrap gap-2">
-                      <button
-                        type="button"
-                        className={`rounded-md px-2 py-1 text-xs font-semibold ${
-                          agent.enabled
-                            ? "bg-emerald-300/20 text-emerald-200"
-                            : "bg-rose-300/20 text-rose-200"
-                        }`}
-                        onClick={() => toggleAgent(agent, !agent.enabled)}
-                      >
-                        {agent.enabled ? "ON" : "OFF"}
-                      </button>
-                      <button
-                        type="button"
-                        className="rounded-md border border-white/20 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300"
-                        onClick={() => nudgeAgent(agent.agentId)}
-                      >
-                        Respond
-                      </button>
+                      {roomDetails?.room.canWrite ? (
+                        <>
+                          <button
+                            type="button"
+                            className={`rounded-md px-2 py-1 text-xs font-semibold ${
+                              agent.enabled
+                                ? "bg-emerald-300/20 text-emerald-200"
+                                : "bg-rose-300/20 text-rose-200"
+                            }`}
+                            onClick={() => toggleAgent(agent, !agent.enabled)}
+                          >
+                            {agent.enabled ? "ON" : "OFF"}
+                          </button>
+                          <button
+                            type="button"
+                            className="rounded-md border border-white/20 px-2 py-1 text-xs text-slate-200 hover:border-cyan-300"
+                            onClick={() => nudgeAgent(agent.agentId)}
+                          >
+                            Respond
+                          </button>
+                        </>
+                      ) : (
+                        <span className="rounded-md border border-cyan-300/30 px-2 py-1 text-[10px] text-cyan-200">
+                          read-only
+                        </span>
+                      )}
                       {agent.respondOnlyWhenMentioned ? (
                         <span className="rounded-md border border-cyan-300/40 px-2 py-1 text-[10px] text-cyan-200">
                           mention-only

@@ -4,6 +4,7 @@ import { env } from "@/lib/env";
 import { fail, ok } from "@/lib/api/response";
 import { toRoomAgentSummary } from "@/lib/messages";
 import { prisma } from "@/lib/prisma";
+import { assertSafeText } from "@/lib/safety";
 
 const createAgentSchema = z.object({
   roomId: z.string().min(1),
@@ -39,6 +40,16 @@ export async function POST(request: Request) {
 
   if (!roomMembership) {
     return fail("Join the room before adding agents.", 403);
+  }
+
+  const promptSafety = assertSafeText(parsed.data.systemPrompt);
+  if (!promptSafety.ok) {
+    return fail("Agent description contains blocked content.", 400);
+  }
+
+  const nameSafety = assertSafeText(parsed.data.name);
+  if (!nameSafety.ok) {
+    return fail("Agent name contains blocked content.", 400);
   }
 
   const roomAgent = await prisma.$transaction(async (tx) => {

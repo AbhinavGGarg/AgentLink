@@ -44,6 +44,11 @@ export async function POST(request: Request) {
   const hydrated = await prisma.room.findUniqueOrThrow({
     where: { id: parsed.data.roomId },
     include: {
+      createdBy: {
+        select: {
+          username: true,
+        },
+      },
       _count: {
         select: {
           participants: true,

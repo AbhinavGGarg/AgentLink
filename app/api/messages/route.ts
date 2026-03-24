@@ -6,6 +6,7 @@ import { drainAgentQueue } from "@/lib/agents/worker";
 import { messageWithSenderInclude, toChatMessage } from "@/lib/messages";
 import { prisma } from "@/lib/prisma";
 import { enqueueAgentJob } from "@/lib/queue/agent-queue";
+import { assertSafeText } from "@/lib/safety";
 import { emitMessage } from "@/lib/socket/emitter";
 
 const sendMessageSchema = z.object({
@@ -29,6 +30,11 @@ export async function POST(request: Request) {
 
   if (!content) {
     return fail("Message cannot be empty.", 400);
+  }
+
+  const contentSafety = assertSafeText(content);
+  if (!contentSafety.ok) {
+    return fail(contentSafety.message, 400);
   }
 
   const membership = await prisma.roomParticipant.findUnique({

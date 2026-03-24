@@ -45,6 +45,8 @@ export function toChatMessage(message: DbMessage): ChatMessage {
 export function toRoomSummary(room: {
   id: string;
   name: string;
+  friendsCanView?: boolean;
+  createdBy?: { username: string };
   _count: { participants: number; roomAgents: number };
 }): RoomSummary {
   return {
@@ -52,6 +54,8 @@ export function toRoomSummary(room: {
     name: room.name,
     participantCount: room._count.participants,
     agentCount: room._count.roomAgents,
+    ownerUsername: room.createdBy?.username,
+    friendsCanView: room.friendsCanView,
   };
 }
 

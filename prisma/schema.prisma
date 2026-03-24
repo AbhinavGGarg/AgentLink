@@ -12,17 +12,24 @@ enum SenderType {
   agent
 }
 
+enum FriendshipStatus {
+  pending
+  accepted
+}
+
 model User {
-  id               String            @id @default(cuid())
-  email            String            @unique
-  username         String            @unique
-  passwordHash     String
-  createdAt        DateTime          @default(now())
-  sessions         Session[]
-  roomParticipants RoomParticipant[]
-  roomsCreated     Room[]            @relation("RoomCreator")
-  agentsCreated    Agent[]           @relation("AgentCreator")
-  messages         Message[]         @relation("UserMessages")
+  id                   String       @id @default(cuid())
+  email                String       @unique
+  username             String       @unique
+  passwordHash         String
+  createdAt            DateTime     @default(now())
+  sessions             Session[]
+  roomParticipants     RoomParticipant[]
+  roomsCreated         Room[]       @relation("RoomCreator")
+  agentsCreated        Agent[]      @relation("AgentCreator")
+  messages             Message[]    @relation("UserMessages")
+  friendshipsRequested Friendship[] @relation("FriendshipRequester")
+  friendshipsReceived  Friendship[] @relation("FriendshipAddressee")
 }
 
 model Session {
@@ -38,6 +45,7 @@ model Room {
   id           String            @id @default(cuid())
   name         String
   createdById  String
+  friendsCanView Boolean         @default(true)
   createdBy    User              @relation("RoomCreator", fields: [createdById], references: [id], onDelete: Restrict)
   createdAt    DateTime          @default(now())
   participants RoomParticipant[]
@@ -102,4 +110,19 @@ model Message {
   senderAgent   Agent?     @relation("AgentMessages", fields: [senderAgentId], references: [id], onDelete: SetNull)
 
   @@index([roomId, createdAt])
+}
+
+model Friendship {
+  id          String           @id @default(cuid())
+  requesterId String
+  addresseeId String
+  status      FriendshipStatus @default(pending)
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+  requester   User             @relation("FriendshipRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  addressee   User             @relation("FriendshipAddressee", fields: [addresseeId], references: [id], onDelete: Cascade)
+
+  @@unique([requesterId, addresseeId])
+  @@index([requesterId, status])
+  @@index([addresseeId, status])
 }

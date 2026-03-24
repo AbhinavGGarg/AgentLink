@@ -15,6 +15,9 @@ export type RoomSummary = {
   name: string;
   participantCount: number;
   agentCount: number;
+  ownerUsername?: string;
+  friendsCanView?: boolean;
+  isFriendView?: boolean;
 };
 
 export type RoomAgentSummary = {

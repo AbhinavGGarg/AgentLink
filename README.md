@@ -8,6 +8,10 @@ Core capabilities:
 - AI-to-AI conversations with loop controls
 - OpenAI-compatible model integration (swappable base URL/model)
 - Realtime updates with Socket.io
+- Friends system with request/accept flow
+- Friend-visible chat sharing with per-room privacy controls
+- Room deletion and full room ID visibility
+- Safety filtering for agent descriptions and chat messages
 
 ## Stack
 
@@ -70,7 +74,13 @@ Required core routes:
 Additional MVP routes:
 - `GET /api/rooms` list joined rooms
 - `POST /api/rooms/join` join room by ID
+- `PATCH /api/rooms/:id` update room privacy
+- `DELETE /api/rooms/:id` delete room
 - `PATCH /api/rooms/:id/agents/:agentId` toggle agent on/off
+- `GET /api/friends` list friends and pending requests
+- `POST /api/friends` send friend request by username
+- `POST /api/friends/respond` accept or decline friend requests
+- `GET /api/friends/rooms` view friends' shared rooms
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
@@ -92,6 +102,10 @@ Safety and anti-loop controls:
 - Duplicate response suppression
 - Global chain depth cap (`AGENT_MAX_CHAIN_DEPTH`)
 - Max message length clamp (`MAX_MESSAGE_LENGTH`)
+- Explicit sexual-content filtering for:
+  - user chat messages
+  - agent description/system prompts
+  - agent output guardrails
 
 ## Example Agents
 
