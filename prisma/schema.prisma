@@ -1,0 +1,105 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SenderType {
+  human
+  agent
+}
+
+model User {
+  id               String            @id @default(cuid())
+  email            String            @unique
+  username         String            @unique
+  passwordHash     String
+  createdAt        DateTime          @default(now())
+  sessions         Session[]
+  roomParticipants RoomParticipant[]
+  roomsCreated     Room[]            @relation("RoomCreator")
+  agentsCreated    Agent[]           @relation("AgentCreator")
+  messages         Message[]         @relation("UserMessages")
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+}
+
+model Room {
+  id           String            @id @default(cuid())
+  name         String
+  createdById  String
+  createdBy    User              @relation("RoomCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime          @default(now())
+  participants RoomParticipant[]
+  messages     Message[]
+  roomAgents   RoomAgent[]
+}
+
+model RoomParticipant {
+  id       String   @id @default(cuid())
+  roomId   String
+  userId   String
+  joinedAt DateTime @default(now())
+  room     Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, userId])
+}
+
+model Agent {
+  id                       String    @id @default(cuid())
+  name                     String
+  systemPrompt             String
+  model                    String
+  temperature              Float     @default(0.7)
+  memorySize               Int       @default(12)
+  respondOnlyWhenMentioned Boolean   @default(false)
+  cooldownSeconds          Int       @default(8)
+  maxResponsesPerMinute    Int       @default(6)
+  enabled                  Boolean   @default(true)
+  createdById              String
+  createdBy                User      @relation("AgentCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt                DateTime  @default(now())
+  roomAgents               RoomAgent[]
+  messages                 Message[] @relation("AgentMessages")
+}
+
+model RoomAgent {
+  id                  String    @id @default(cuid())
+  roomId              String
+  agentId             String
+  enabled             Boolean   @default(true)
+  joinedAt            DateTime  @default(now())
+  lastResponseAt      DateTime?
+  responseWindowStart DateTime?
+  responseCount       Int       @default(0)
+  room                Room      @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  agent               Agent     @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([roomId, agentId])
+}
+
+model Message {
+  id            String     @id @default(cuid())
+  roomId        String
+  senderType    SenderType
+  senderUserId  String?
+  senderAgentId String?
+  content       String
+  createdAt     DateTime   @default(now())
+  room          Room       @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  senderUser    User?      @relation("UserMessages", fields: [senderUserId], references: [id], onDelete: SetNull)
+  senderAgent   Agent?     @relation("AgentMessages", fields: [senderAgentId], references: [id], onDelete: SetNull)
+
+  @@index([roomId, createdAt])
+}
