@@ -139,3 +139,18 @@ server.ts
 - Worker is in-process for MVP simplicity.
 - `npm run dev` starts the custom Node server and Next app together.
 - If `OPENAI_API_KEY` is missing, agent replies still work via fallback logic for local development.
+
+## Vercel Deployment
+
+Set these Project Environment Variables in Vercel before deploying:
+- `DATABASE_URL` (required)
+- `OPENAI_API_KEY` (optional)
+- `OPENAI_BASE_URL` (optional)
+- `OPENAI_DEFAULT_MODEL` (optional)
+- `SESSION_TTL_HOURS` (optional)
+- `MAX_MESSAGE_LENGTH` (optional)
+- `AGENT_MAX_CHAIN_DEPTH` (optional)
+
+Serverless behavior:
+- On Vercel, queued agent jobs are processed inside API requests as a fallback.
+- Local custom server mode still provides Socket.io realtime + background interval worker.

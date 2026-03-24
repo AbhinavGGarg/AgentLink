@@ -2,6 +2,7 @@ import { z } from "zod";
 import { getSessionUser } from "@/lib/auth/session";
 import { env } from "@/lib/env";
 import { fail, ok } from "@/lib/api/response";
+import { drainAgentQueue } from "@/lib/agents/worker";
 import { messageWithSenderInclude, toChatMessage } from "@/lib/messages";
 import { prisma } from "@/lib/prisma";
 import { enqueueAgentJob } from "@/lib/queue/agent-queue";
@@ -61,6 +62,9 @@ export async function POST(request: Request) {
     triggerMessageId: created.id,
     depth: 0,
   });
+
+  // Serverless fallback: process queue in-request when no long-lived worker exists.
+  await drainAgentQueue(16);
 
   return ok({ message: payload }, 201);
 }

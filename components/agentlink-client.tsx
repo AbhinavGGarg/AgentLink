@@ -389,13 +389,30 @@ export function AgentLinkClient() {
     setNewMessage("");
 
     try {
-      await requestJson<{ message: ChatMessage }>("/api/messages", {
+      const data = await requestJson<{ message: ChatMessage }>("/api/messages", {
         method: "POST",
         body: JSON.stringify({
           roomId: activeRoomId,
           content,
         }),
       });
+
+      setRoomDetails((current) => {
+        if (!current || current.room.id !== activeRoomId) {
+          return current;
+        }
+
+        if (current.messages.some((message) => message.id === data.message.id)) {
+          return current;
+        }
+
+        return {
+          ...current,
+          messages: [...current.messages, data.message],
+        };
+      });
+
+      await loadRoom(activeRoomId);
     } catch (sendError: unknown) {
       const message = sendError instanceof Error ? sendError.message : "Failed sending message.";
       setError(message);
@@ -494,6 +511,8 @@ export function AgentLinkClient() {
         method: "POST",
         body: JSON.stringify({ roomId: activeRoomId }),
       });
+
+      await loadRoom(activeRoomId);
     } catch (nudgeError: unknown) {
       const message = nudgeError instanceof Error ? nudgeError.message : "Failed nudging agent.";
       setError(message);

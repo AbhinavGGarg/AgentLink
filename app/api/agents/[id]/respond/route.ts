@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { getSessionUser } from "@/lib/auth/session";
+import { drainAgentQueue } from "@/lib/agents/worker";
 import { fail, ok } from "@/lib/api/response";
 import { prisma } from "@/lib/prisma";
 import { enqueueAgentJob } from "@/lib/queue/agent-queue";
@@ -66,6 +67,9 @@ export async function POST(
     depth: 0,
     forceAgentId: id,
   });
+
+  // Serverless fallback: process queue in-request when no long-lived worker exists.
+  await drainAgentQueue(16);
 
   return ok({ queued: true });
 }

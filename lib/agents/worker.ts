@@ -39,14 +39,14 @@ function isInCooldown(roomAgent: RoomAgent, now: Date, cooldownSeconds: number) 
   return elapsed < cooldownSeconds * 1000;
 }
 
-async function processNextJob() {
+export async function processNextJob() {
   if (processing) {
-    return;
+    return false;
   }
 
   const job = dequeueAgentJob();
   if (!job) {
-    return;
+    return false;
   }
 
   processing = true;
@@ -58,7 +58,7 @@ async function processNextJob() {
     });
 
     if (!triggerMessage) {
-      return;
+      return true;
     }
 
     const roomAgents = await prisma.roomAgent.findMany({
@@ -79,7 +79,7 @@ async function processNextJob() {
     });
 
     if (roomAgents.length === 0) {
-      return;
+      return true;
     }
 
     const recentMessages = await prisma.message.findMany({
@@ -193,11 +193,27 @@ async function processNextJob() {
         });
       }
     }
+    return true;
   } catch (error) {
     console.error("[agent-worker] Failed job", error);
+    return false;
   } finally {
     processing = false;
   }
+}
+
+export async function drainAgentQueue(maxJobs = 24) {
+  let processed = 0;
+
+  while (processed < maxJobs && getQueueSize() > 0 && !processing) {
+    const didProcess = await processNextJob();
+    if (!didProcess) {
+      break;
+    }
+    processed += 1;
+  }
+
+  return processed;
 }
 
 export function startAgentWorker() {
@@ -207,7 +223,7 @@ export function startAgentWorker() {
 
   workerTimer = setInterval(() => {
     if (!processing && getQueueSize() > 0) {
-      void processNextJob();
+      void drainAgentQueue(8);
     }
   }, 600);
 }
