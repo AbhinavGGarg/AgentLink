@@ -34,24 +34,103 @@ function senderLabel(message: {
   return message.senderAgent?.name ?? "Agent";
 }
 
+function normalizeMathExpression(raw: string) {
+  return raw
+    .toLowerCase()
+    .replace(/,/g, "")
+    .replace(/\bplus\b/g, "+")
+    .replace(/\bminus\b/g, "-")
+    .replace(/\btimes\b/g, "*")
+    .replace(/\bmultiplied by\b/g, "*")
+    .replace(/\bx\b/g, "*")
+    .replace(/\bdivided by\b/g, "/")
+    .replace(/\bover\b/g, "/")
+    .replace(/\^/g, "**")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function trySolveMath(text: string) {
+  const lowered = text.trim().toLowerCase();
+  const fromQuestion =
+    lowered.match(/(?:what is|what's|calculate|compute|solve)\s+(.+?)(?:\?+)?$/i)?.[1] ?? lowered;
+  const expression = normalizeMathExpression(fromQuestion).replace(/=\s*$/, "");
+
+  if (!expression || !/[0-9]/.test(expression)) {
+    return null;
+  }
+
+  if (!/^[0-9+\-*/().% ]+$/.test(expression)) {
+    return null;
+  }
+
+  try {
+    const result = Function(`"use strict"; return (${expression});`)() as unknown;
+    if (typeof result !== "number" || !Number.isFinite(result)) {
+      return null;
+    }
+
+    const pretty = Number.isInteger(result)
+      ? String(result)
+      : result.toFixed(8).replace(/\.?0+$/, "");
+    return `The answer is ${pretty}.`;
+  } catch {
+    return null;
+  }
+}
+
+function buildSummaryFromHistory(input: GenerateReplyInput) {
+  const recent = input.history
+    .slice(-8)
+    .map((message) => {
+      const author = message.senderType === "human" ? message.senderUser?.username : message.senderAgent?.name;
+      return { author: author ?? (message.senderType === "human" ? "Human" : "Agent"), content: message.content };
+    })
+    .filter((entry) => entry.content.trim().length > 0);
+
+  if (recent.length === 0) {
+    return "Summary: No prior messages to summarize yet.";
+  }
+
+  const highlights = recent.slice(-3).map((entry) => `- ${entry.author}: ${entry.content.slice(0, 140)}`);
+  return `Summary of recent chat:\n${highlights.join("\n")}`;
+}
+
 function buildFallbackReply(input: GenerateReplyInput) {
   const prompt = input.agent.systemPrompt.toLowerCase();
   const source = input.triggerMessage.content.trim();
+  const lowered = source.toLowerCase();
+
+  const solved = trySolveMath(source);
+  if (solved) {
+    return solved;
+  }
+
+  if (/^(hi|hello|hey|yo|sup)[!. ]*$/i.test(source)) {
+    return "Hey! I am here and ready. Ask me anything, and I will do my best to help.";
+  }
+
+  if (/^(thanks|thank you|thx)[!. ]*$/i.test(source)) {
+    return "You are welcome. Want to keep going?";
+  }
 
   if (prompt.includes("summar")) {
-    const compact = source.split(/\s+/).slice(0, 24).join(" ");
-    return `Summary: ${compact}${source.length > compact.length ? "..." : ""}`;
+    return buildSummaryFromHistory(input);
   }
 
   if (prompt.includes("debate") || prompt.includes("debater")) {
-    return `Counterpoint: I see your angle, but a stronger claim needs evidence and a concrete tradeoff analysis.`;
+    return `Counterpoint: I see your claim, but we should test assumptions, cite evidence, and compare alternatives before concluding.`;
   }
 
   if (prompt.includes("chaos")) {
     return `Plot twist: let's invert the assumption and test the wild scenario before settling.`;
   }
 
-  return `I can help with that. My current take: ${source.slice(0, 180)}`;
+  if (lowered.endsWith("?")) {
+    return "Short answer: I can handle math and structured reasoning in fallback mode. For broad knowledge responses, add an OpenAI API key.";
+  }
+
+  return `My take: ${source.slice(0, 180)}`;
 }
 
 export async function generateAgentReply(input: GenerateReplyInput) {
